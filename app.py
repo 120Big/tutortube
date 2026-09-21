@@ -1,9 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from openai import OpenAI
-from youtube_transcript_api import YouTubeTranscriptApi
 import os
-import re
 
 app = FastAPI(title="TutorTube API")
 
@@ -12,6 +10,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 class VideoRequest(BaseModel):
     youtube_url: str
+    transcript: str
 
 
 @app.get("/")
@@ -22,24 +21,11 @@ def home():
 @app.post("/learn")
 def create_lesson(data: VideoRequest):
 
-    # Extract YouTube video ID
-    match = re.search(
-        r"(?:youtube\.com/watch\?v=|youtu\.be/)([^&?/]+)",
-        data.youtube_url
-    )
-
-    if not match:
-        return {"error": "Invalid YouTube URL"}
-
-    video_id = match.group(1)
-
-    # Get transcript
-    api = YouTubeTranscriptApi()
-    transcript = api.fetch(video_id)
-
-    text = " ".join(
-        snippet.text for snippet in transcript
-    )
+    if not data.transcript.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Transcript is empty."
+        )
 
     prompt = f"""
 You are TutorTube, a patient teacher teaching a complete beginner.
@@ -58,15 +44,22 @@ Create a structured lesson containing:
 Make the explanation simple, practical, and beginner-friendly.
 
 TRANSCRIPT:
-{text}
+{data.transcript}
 """
 
-    response = client.responses.create(
-        model="gpt-5-mini",
-        input=prompt
-    )
+    try:
+        response = client.responses.create(
+            model="gpt-5-mini",
+            input=prompt
+        )
 
-    return {
-        "video_id": video_id,
-        "lesson": response.output_text
-    }
+        return {
+            "video_id": data.youtube_url,
+            "lesson": response.output_text
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI generation failed: {str(e)}"
+        )
